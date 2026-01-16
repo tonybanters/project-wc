@@ -1,4 +1,4 @@
-use projectwc::{CompositorError, Result, state::ProjectWC};
+use projectwc::{CompositorError, Result, state::State};
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 
 fn main() -> Result<()> {
@@ -8,13 +8,13 @@ fn main() -> Result<()> {
         tracing_subscriber::fmt().init();
     }
 
-    let mut event_loop: EventLoop<ProjectWC> =
+    let mut event_loop: EventLoop<State> =
         EventLoop::try_new().map_err(|e| CompositorError::EventLoop(e.to_string()))?;
 
     let display = Display::new().map_err(|e| CompositorError::Backend(e.to_string()))?;
-    let mut state = ProjectWC::new(display, event_loop.handle(), event_loop.get_signal());
-
-    projectwc::backend::winit::init_winit(&mut event_loop, &mut state)?;
+    let mut state = State::new(event_loop.handle(), event_loop.get_signal(), display).ok_or(
+        CompositorError::Backend("Failed to initilize backend".into()),
+    )?;
 
     let spawn_cmd: Option<String> = std::env::args().nth(1);
     if let Some(cmd) = spawn_cmd {

@@ -13,15 +13,14 @@ use smithay::{
 };
 
 use crate::{
-    ProjectWC,
     grabs::resize_grab,
     handlers::{layer_shell, xdg_shell},
-    state::ClientState,
+    state::{ClientState, State},
 };
 
-impl CompositorHandler for ProjectWC {
+impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.compositor_state
+        &mut self.projectwc.compositor_state
     }
 
     fn client_compositor_state<'a>(
@@ -39,26 +38,26 @@ impl CompositorHandler for ProjectWC {
                 root_surface = parent;
             }
 
-            if let Some(window) = self.window_for_surface(&root_surface) {
+            if let Some(window) = self.projectwc.window_for_surface(&root_surface) {
                 window.on_commit();
             }
         }
 
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
-        resize_grab::handle_commit(&mut self.space, surface);
-        layer_shell::handle_commit(&mut self.space, surface);
+        xdg_shell::handle_commit(&mut self.projectwc.popups, &self.projectwc.space, surface);
+        resize_grab::handle_commit(&mut self.projectwc.space, surface);
+        layer_shell::handle_commit(&mut self.projectwc.space, surface);
     }
 }
 
-impl BufferHandler for ProjectWC {
+impl BufferHandler for State {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
 }
 
-impl ShmHandler for ProjectWC {
+impl ShmHandler for State {
     fn shm_state(&self) -> &ShmState {
-        &self.shm_state
+        &self.projectwc.shm_state
     }
 }
 
-delegate_shm!(ProjectWC);
-delegate_compositor!(ProjectWC);
+delegate_shm!(State);
+delegate_compositor!(State);

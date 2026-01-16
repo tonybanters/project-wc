@@ -1,4 +1,4 @@
-use crate::{action::Action, grabs::move_grab::MoveGrab, state::ProjectWC};
+use crate::{action::Action, grabs::move_grab::MoveGrab, state::State};
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
@@ -20,7 +20,8 @@ use smithay::{
     },
 };
 
-impl ProjectWC {
+// TODO: Implement wl traits for State instead of ProjectWC
+impl State {
     pub fn handle_input_event<B: InputBackend>(&mut self, event: InputEvent<B>) {
         match event {
             InputEvent::Keyboard { event } => self.handle_keyboard_event::<B>(event),
@@ -40,9 +41,13 @@ impl ProjectWC {
         let key_code = event.key_code();
         let key_state = event.state();
 
-        let keyboard = self.seat.get_keyboard().expect("keyboard not initialized");
+        let keyboard = self
+            .projectwc
+            .seat
+            .get_keyboard()
+            .expect("keyboard not initialized");
 
-        for layer in self.layer_shell_state.layer_surfaces().rev() {
+        for layer in self.projectwc.layer_shell_state.layer_surfaces().rev() {
             let exclusive = compositor::with_states(layer.wl_surface(), |states| {
                 let mut guard = states.cached_state.get::<LayerSurfaceCachedState>();
                 let data = guard.current();
@@ -52,7 +57,7 @@ impl ProjectWC {
             });
 
             if exclusive {
-                let surface = self.space.outputs().find_map(|output| {
+                let surface = self.projectwc.space.outputs().find_map(|output| {
                     let map = layer_map_for_output(output);
                     map.layers().find(|l| l.layer_surface() == &layer).cloned()
                 });
@@ -94,17 +99,18 @@ impl ProjectWC {
         let serial = SERIAL_COUNTER.next_serial();
         let delta = (event.delta_x(), event.delta_y()).into();
 
-        self.pointer_location += delta;
+        self.projectwc.pointer_location += delta;
         self.clamp_pointer_location();
 
-        let pointer = self.pointer();
-        let under = self.surface_under_pointer();
+        let pointer = self.projectwc.pointer();
+        let under = self.projectwc.surface_under_pointer();
 
+        let location = self.projectwc.pointer_location;
         pointer.motion(
             self,
             under,
             &MotionEvent {
-                location: self.pointer_location,
+                location,
                 serial,
                 time: event.time_msec(),
             },
@@ -117,28 +123,30 @@ impl ProjectWC {
         event: B::PointerMotionAbsoluteEvent,
     ) {
         let output_geo = self
+            .projectwc
             .space
             .outputs()
             .next()
-            .map(|output| self.space.output_geometry(output).unwrap());
+            .map(|output| self.projectwc.space.output_geometry(output).unwrap());
 
         let Some(output_geo) = output_geo else { return };
 
-        self.pointer_location = (
+        self.projectwc.pointer_location = (
             event.x_transformed(output_geo.size.w),
             event.y_transformed(output_geo.size.h),
         )
             .into();
 
         let serial = SERIAL_COUNTER.next_serial();
-        let pointer = self.pointer();
-        let under = self.surface_under_pointer();
+        let pointer = self.projectwc.pointer();
+        let under = self.projectwc.surface_under_pointer();
 
+        let location = self.projectwc.pointer_location;
         pointer.motion(
             self,
             under,
             &MotionEvent {
-                location: self.pointer_location,
+                location,
                 serial,
                 time: event.time_msec(),
             },
@@ -151,37 +159,41 @@ impl ProjectWC {
         let button = event.button();
         let button_code = event.button_code();
         let button_state = event.state();
-        let pointer = self.pointer();
+        let pointer = self.projectwc.pointer();
 
-        let keyboard = self.seat.get_keyboard().expect("keyboard not initialized");
+        let keyboard = self
+            .projectwc
+            .seat
+            .get_keyboard()
+            .expect("keyboard not initialized");
         let alt_held = keyboard.modifier_state().alt;
 
         if ButtonState::Pressed == button_state
             && button == Some(MouseButton::Left)
             && alt_held
-            && let Some((window, _)) = self.window_under_pointer()
+            && let Some((window, _)) = self.projectwc.window_under_pointer()
             && !pointer.is_grabbed()
         {
-            let location = self.pointer_location;
+            let location = self.projectwc.pointer_location;
 
             let start_data = PointerGrabStartData {
                 focus: None,
                 button: button_code,
                 location,
             };
-            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_location = self.projectwc.space.element_location(&window).unwrap();
             let grab = MoveGrab {
                 start_data,
                 window: window.clone(),
                 initial_window_location,
             };
             pointer.set_grab(self, grab, serial, Focus::Clear);
-            self.space.raise_element(&window, true);
+            self.projectwc.space.raise_element(&window, true);
         }
 
         if ButtonState::Pressed == button_state {
-            self.update_keyboard_focus(self.pointer_location, serial);
-            self.space.elements().for_each(|window| {
+            self.update_keyboard_focus(self.projectwc.pointer_location, serial);
+            self.projectwc.space.elements().for_each(|window| {
                 window
                     .toplevel()
                     .map(|toplevel| toplevel.send_pending_configure());
@@ -201,16 +213,16 @@ impl ProjectWC {
     }
 
     fn update_keyboard_focus(&mut self, location: Point<f64, Logical>, serial: Serial) {
-        let keyboard = self.seat.get_keyboard().unwrap();
-        let input_method = self.seat.input_method();
+        let keyboard = self.projectwc.seat.get_keyboard().unwrap();
+        let input_method = self.projectwc.seat.input_method();
 
-        if !self.pointer().is_grabbed()
+        if !self.projectwc.pointer().is_grabbed()
             && (!keyboard.is_grabbed() || input_method.keyboard_grabbed())
         {
             tracing::debug!("Pointer and keyboard are not grabbed");
             // There's only one output as of now
-            let output = self.space.outputs().next().cloned().unwrap();
-            let output_geo = self.space.output_geometry(&output).unwrap();
+            let output = self.projectwc.space.outputs().next().cloned().unwrap();
+            let output_geo = self.projectwc.space.output_geometry(&output).unwrap();
 
             let layers = layer_map_for_output(&output);
 
@@ -240,12 +252,13 @@ impl ProjectWC {
             }
 
             if let Some((window, _)) = self
+                .projectwc
                 .space
                 .element_under(location)
                 .map(|(w, p)| (w.clone(), p))
             {
                 tracing::debug!("Setting focus of surface under pointer");
-                self.space.raise_element(&window, true);
+                self.projectwc.space.raise_element(&window, true);
                 keyboard.set_focus(
                     self,
                     Some(window.toplevel().unwrap().wl_surface().clone()),
@@ -310,24 +323,27 @@ impl ProjectWC {
             }
         }
 
-        let pointer = self.pointer();
+        let pointer = self.projectwc.pointer();
         pointer.axis(self, axis_frame);
         pointer.frame(self);
     }
 
     fn clamp_pointer_location(&mut self) {
         let output_geo = self
+            .projectwc
             .space
             .outputs()
             .next()
-            .map(|output| self.space.output_geometry(output).unwrap());
+            .map(|output| self.projectwc.space.output_geometry(output).unwrap());
 
         if let Some(output_geo) = output_geo {
-            self.pointer_location.x = self
+            self.projectwc.pointer_location.x = self
+                .projectwc
                 .pointer_location
                 .x
                 .clamp(0.0, output_geo.size.w as f64 - 1.0);
-            self.pointer_location.y = self
+            self.projectwc.pointer_location.y = self
+                .projectwc
                 .pointer_location
                 .y
                 .clamp(0.0, output_geo.size.h as f64 - 1.0);
@@ -335,7 +351,7 @@ impl ProjectWC {
     }
 }
 
-fn handle_keybinding(state: &mut ProjectWC, modifiers: &ModifiersState, keysym: Keysym) -> bool {
+fn handle_keybinding(state: &mut State, modifiers: &ModifiersState, keysym: Keysym) -> bool {
     if !modifiers.alt {
         return false;
     }
@@ -343,7 +359,7 @@ fn handle_keybinding(state: &mut ProjectWC, modifiers: &ModifiersState, keysym: 
     match keysym {
         Keysym::Escape => {
             tracing::debug!("Quitting");
-            state.loop_signal.stop();
+            state.projectwc.loop_signal.stop();
             true
         }
         Keysym::Return => {
@@ -352,9 +368,9 @@ fn handle_keybinding(state: &mut ProjectWC, modifiers: &ModifiersState, keysym: 
             true
         }
         Keysym::q => {
-            let keyboard = state.seat.get_keyboard().unwrap();
+            let keyboard = state.projectwc.seat.get_keyboard().unwrap();
             if let Some(focused_surface) = keyboard.current_focus()
-                && let Some(window) = state.window_for_surface(&focused_surface)
+                && let Some(window) = state.projectwc.window_for_surface(&focused_surface)
             {
                 tracing::info!("Closing focused window");
                 window.toplevel().unwrap().send_close();

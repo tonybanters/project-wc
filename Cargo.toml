@@ -5,11 +5,18 @@ edition = "2024"
 
 [dependencies]
 smithay = { git = "https://github.com/Smithay/smithay/", default-features = false, features = [
+  "backend_drm",
+  "backend_gbm",
+  "backend_libinput",
+  "backend_session_libseat",
+  "backend_udev",
   "backend_winit",
   "desktop",
   "renderer_glow",
+  "renderer_multi",
   "wayland_frontend",
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2.10"
+smithay-drm-extras = "0.1.0"

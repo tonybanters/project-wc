@@ -3,7 +3,9 @@ mod layer_shell;
 mod xdg_shell;
 
 use smithay::{
-    delegate_data_device, delegate_output, delegate_primary_selection, delegate_seat,
+    backend::drm::DrmNode,
+    delegate_data_device, delegate_drm_lease, delegate_output, delegate_primary_selection,
+    delegate_seat,
     input::{
         Seat, SeatHandler, SeatState,
         dnd::{DnDGrab, DndGrabHandler, GrabType},
@@ -11,6 +13,9 @@ use smithay::{
     },
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     wayland::{
+        drm_lease::{
+            DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState, LeaseRejected,
+        },
         output::OutputHandler,
         selection::{
             SelectionHandler,
@@ -25,21 +30,22 @@ use smithay::{
 };
 
 use crate::{
-    ProjectWC, delegate_screencopy,
+    delegate_screencopy,
     protocols::wlr_screencopy::{Screencopy, ScreencopyHandler, ScreencopyManagerState},
+    state::State,
 };
 
-impl SeatHandler for ProjectWC {
+impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
 
     fn seat_state(&mut self) -> &mut SeatState<Self> {
-        &mut self.seat_state
+        &mut self.projectwc.seat_state
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
-        let dh = &self.display_handle;
+        let dh = &self.projectwc.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client.clone());
         set_primary_focus(dh, seat, client);
@@ -48,21 +54,21 @@ impl SeatHandler for ProjectWC {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
 }
 
-delegate_seat!(ProjectWC);
+delegate_seat!(State);
 
-impl SelectionHandler for ProjectWC {
+impl SelectionHandler for State {
     type SelectionUserData = ();
 }
 
-impl DataDeviceHandler for ProjectWC {
+impl DataDeviceHandler for State {
     fn data_device_state(&mut self) -> &mut DataDeviceState {
-        &mut self.data_device_state
+        &mut self.projectwc.data_device_state
     }
 }
 
-impl DndGrabHandler for ProjectWC {}
+impl DndGrabHandler for State {}
 
-impl WaylandDndGrabHandler for ProjectWC {
+impl WaylandDndGrabHandler for State {
     fn dnd_requested<S: smithay::input::dnd::Source>(
         &mut self,
         source: S,
@@ -76,7 +82,8 @@ impl WaylandDndGrabHandler for ProjectWC {
                 let ptr = seat.get_pointer().unwrap();
                 let start_data = ptr.grab_start_data().unwrap();
 
-                let grab = DnDGrab::new_pointer(&self.display_handle, start_data, source, seat);
+                let grab =
+                    DnDGrab::new_pointer(&self.projectwc.display_handle, start_data, source, seat);
                 ptr.set_grab(self, grab, serial, Focus::Keep);
             }
             // TODO: handle touch grab
@@ -85,27 +92,85 @@ impl WaylandDndGrabHandler for ProjectWC {
     }
 }
 
-delegate_data_device!(ProjectWC);
+delegate_data_device!(State);
 
-impl OutputHandler for ProjectWC {}
+impl OutputHandler for State {}
 
-delegate_output!(ProjectWC);
+delegate_output!(State);
 
-impl PrimarySelectionHandler for ProjectWC {
+impl PrimarySelectionHandler for State {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
-        &mut self.primary_selection_state
+        &mut self.projectwc.primary_selection_state
     }
 }
-delegate_primary_selection!(ProjectWC);
+delegate_primary_selection!(State);
 
-impl ScreencopyHandler for ProjectWC {
+impl ScreencopyHandler for State {
     fn screencopy_state(&mut self) -> &mut ScreencopyManagerState {
-        &mut self.screencopy_state
+        &mut self.projectwc.screencopy_state
     }
 
     fn frame(&mut self, screencopy: Screencopy) {
-        self.pending_screencopy = Some(screencopy);
+        self.projectwc.pending_screencopy = Some(screencopy);
     }
 }
 
-delegate_screencopy!(ProjectWC);
+delegate_screencopy!(State);
+
+impl DrmLeaseHandler for State {
+    fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
+        self.backend
+            .udev()
+            .devices
+            .get_mut(&node)
+            .unwrap()
+            .drm_lease_state
+            .as_mut()
+            .unwrap()
+    }
+
+    fn lease_request(
+        &mut self,
+        node: DrmNode,
+        request: DrmLeaseRequest,
+    ) -> Result<DrmLeaseBuilder, LeaseRejected> {
+        let device = self.backend.udev().devices.get(&node).unwrap();
+        let mut builder = DrmLeaseBuilder::new(&device.drm);
+        for connector in request.connectors {
+            let (_, crtc) = device
+                .non_desktop_connectors
+                .iter()
+                .find(|(handle, _)| connector == *handle)
+                .ok_or(LeaseRejected::default())?;
+            builder.add_connector(connector);
+            builder.add_crtc(*crtc);
+
+            let planes = device.drm.planes(crtc).map_err(LeaseRejected::with_cause)?;
+            let (primary_plane, primary_plane_claim) = planes
+                .primary
+                .iter()
+                .find_map(|plane| {
+                    device
+                        .drm
+                        .claim_plane(plane.handle, *crtc)
+                        .map(|claim| (plane, claim))
+                })
+                .ok_or_else(LeaseRejected::default)?;
+            builder.add_plane(primary_plane.handle, primary_plane_claim);
+        }
+
+        Ok(builder)
+    }
+
+    fn new_active_lease(&mut self, node: DrmNode, lease: smithay::wayland::drm_lease::DrmLease) {
+        let device = self.backend.udev().devices.get_mut(&node).unwrap();
+        device.active_leases.push(lease);
+    }
+
+    fn lease_destroyed(&mut self, node: DrmNode, lease_id: u32) {
+        let backend = self.backend.udev().devices.get_mut(&node).unwrap();
+        backend.active_leases.retain(|l| l.id() != lease_id);
+    }
+}
+
+delegate_drm_lease!(State);

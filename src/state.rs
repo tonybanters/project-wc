@@ -19,21 +19,52 @@ use smithay::{
         socket::ListeningSocketSource,
     },
 };
-use std::{ffi::OsString, sync::Arc};
+use std::{env, ffi::OsString, sync::Arc};
 
 use crate::{
     CompositorError,
+    backend::{Backend, udev::Udev, winit::Winit},
     layout::{GapConfig, LayoutBox, LayoutType},
     protocols::wlr_screencopy::{Screencopy, ScreencopyManagerState},
 };
 
+pub struct State {
+    pub backend: Backend,
+    pub projectwc: ProjectWC,
+}
+
+impl State {
+    // TODO: Review error type
+    pub fn new(
+        event_loop: LoopHandle<'static, State>,
+        loop_signal: LoopSignal,
+        display: Display<State>,
+    ) -> Option<Self> {
+        let has_display =
+            env::var_os("WAYLAND_DISPLAY").is_some() || env::var_os("DISPLAY").is_some();
+
+        let mut projectwc = ProjectWC::new(display, event_loop.clone(), loop_signal);
+        let backend = if has_display {
+            let winit = Winit::new(&mut projectwc).ok()?;
+            Backend::Winit(winit)
+        } else {
+            let udev = Udev::new(event_loop, &mut projectwc)?;
+            Backend::Udev(udev)
+        };
+
+        let state = State { backend, projectwc };
+
+        Some(state)
+    }
+}
+
 pub struct ProjectWC {
     pub display_handle: DisplayHandle,
-    pub loop_handle: LoopHandle<'static, ProjectWC>,
+    pub loop_handle: LoopHandle<'static, State>,
     pub loop_signal: LoopSignal,
 
     pub space: Space<Window>,
-    pub seat: Seat<Self>,
+    pub seat: Seat<State>,
     pub layout: LayoutBox,
     pub socket_name: OsString,
     pub start_time: std::time::Instant,
@@ -44,7 +75,7 @@ pub struct ProjectWC {
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub data_device_state: DataDeviceState,
-    pub seat_state: SeatState<Self>,
+    pub seat_state: SeatState<State>,
     pub popups: PopupManager,
     pub primary_selection_state: PrimarySelectionState,
     pub layer_shell_state: WlrLayerShellState,
@@ -56,8 +87,8 @@ pub struct ProjectWC {
 
 impl ProjectWC {
     pub fn new(
-        display: Display<Self>,
-        loop_handle: LoopHandle<'static, ProjectWC>,
+        display: Display<State>,
+        loop_handle: LoopHandle<'static, State>,
         loop_signal: LoopSignal,
     ) -> Self {
         let start_time = std::time::Instant::now();
@@ -65,17 +96,19 @@ impl ProjectWC {
         let display_handle = display.handle();
 
         // State
-        let compositor_state = CompositorState::new::<Self>(&display_handle);
-        let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
-        let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
-        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
-        let data_device_state = DataDeviceState::new::<Self>(&display_handle);
+        let compositor_state = CompositorState::new::<State>(&display_handle);
+        let xdg_shell_state = XdgShellState::new::<State>(&display_handle);
+        let shm_state = ShmState::new::<State>(&display_handle, vec![]);
+        let output_manager_state =
+            OutputManagerState::new_with_xdg_output::<State>(&display_handle);
+        let data_device_state = DataDeviceState::new::<State>(&display_handle);
         let popups = PopupManager::default();
-        let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
-        let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
-        let screencopy_state = ScreencopyManagerState::new::<Self, _>(&display_handle, |_| true);
+        let primary_selection_state = PrimarySelectionState::new::<State>(&display_handle);
+        let layer_shell_state = WlrLayerShellState::new::<State>(&display_handle);
+        let screencopy_state = ScreencopyManagerState::new::<State, _>(&display_handle, |_| true);
         let mut seat_state = SeatState::new();
 
+        // TODO: Use backends's `seat_name`
         let mut seat = seat_state.new_wl_seat(&display_handle, "winit");
         seat.add_keyboard(Default::default(), 200, 25)
             .expect("failed to add keyboard");
@@ -201,14 +234,14 @@ impl ProjectWC {
             })
     }
 
-    pub fn pointer(&self) -> PointerHandle<Self> {
+    pub fn pointer(&self) -> PointerHandle<State> {
         self.seat.get_pointer().expect("pointer not initialized")
     }
 }
 
 pub fn init_wayland_listener(
-    display: Display<ProjectWC>,
-    loop_handle: &LoopHandle<'static, ProjectWC>,
+    display: Display<State>,
+    loop_handle: &LoopHandle<'static, State>,
 ) -> OsString {
     let listening_socket = ListeningSocketSource::new_auto().expect("failed to create socket");
     let socket_name = listening_socket.socket_name().to_os_string();
@@ -216,6 +249,7 @@ pub fn init_wayland_listener(
     loop_handle
         .insert_source(listening_socket, move |client_stream, _, state| {
             state
+                .projectwc
                 .display_handle
                 .insert_client(client_stream, Arc::new(ClientState::default()))
                 .expect("failed to insert client");
