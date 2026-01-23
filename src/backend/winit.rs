@@ -9,131 +9,150 @@ use smithay::{
             element::surface::WaylandSurfaceRenderElement,
             gles::{GlesRenderer, GlesTarget},
         },
-        winit::{self, WinitEvent},
+        winit::{self, WinitEvent, WinitGraphicsBackend},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    reexports::calloop::EventLoop,
     reexports::wayland_server::protocol::wl_shm::Format,
     utils::{Physical, Rectangle, Size, Transform},
     wayland::shm,
 };
 
-use crate::{CompositorError, ProjectWC, Result, protocols::wlr_screencopy::Screencopy};
+use crate::{
+    CompositorError, ProjectWC, Result, protocols::wlr_screencopy::Screencopy, state::State,
+};
 
-pub fn init_winit(event_loop: &mut EventLoop<ProjectWC>, state: &mut ProjectWC) -> Result<()> {
-    let (mut winit_backend, winit) =
-        winit::init::<GlesRenderer>().map_err(|e| CompositorError::Backend(format!("{:?}", e)))?;
+pub struct Winit {
+    output: Output,
+    backend: WinitGraphicsBackend<GlesRenderer>,
+    damage_tracker: OutputDamageTracker,
+}
 
-    let physical_properties = PhysicalProperties {
-        size: (0, 0).into(),
-        subpixel: Subpixel::Unknown,
-        make: "projectwc".into(),
-        model: "winit".into(),
-        serial_number: "Unknown".into(),
-    };
+impl Winit {
+    pub fn new(projectwc: &mut ProjectWC) -> Result<Self> {
+        let (backend, winit) = winit::init::<GlesRenderer>()
+            .map_err(|e| CompositorError::Backend(format!("{:?}", e)))?;
 
-    let mode = Mode {
-        size: winit_backend.window_size(),
-        refresh: 60_000,
-    };
+        let physical_properties = PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "projectwc".into(),
+            model: "winit".into(),
+            serial_number: "Unknown".into(),
+        };
 
-    let output = Output::new("projectwc".into(), physical_properties);
-    output.create_global::<ProjectWC>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, None);
-    output.set_preferred(mode);
+        let mode = Mode {
+            size: backend.window_size(),
+            refresh: 60_000,
+        };
 
-    state.space.map_output(&output, (0, 0));
+        let output = Output::new("winit".into(), physical_properties);
+        output.create_global::<State>(&projectwc.display_handle);
+        output.change_current_state(Some(mode), Some(Transform::Flipped180), None, None);
+        output.set_preferred(mode);
 
-    let mut damage_tracker = OutputDamageTracker::from_output(&output);
+        projectwc.space.map_output(&output, (0, 0));
 
-    // Set WAYLAND_DISPLAY for child processes
-    unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };
+        let damage_tracker = OutputDamageTracker::from_output(&output);
 
-    event_loop
-        .handle()
-        .insert_source(winit, move |event, _, state| match event {
-            WinitEvent::Resized { size, .. } => {
-                output.change_current_state(
-                    Some(smithay::output::Mode {
-                        size,
-                        refresh: 60_000,
-                    }),
-                    None,
-                    None,
-                    None,
-                );
-                state.apply_layout().ok();
-            }
-            WinitEvent::Input(event) => state.handle_input_event(event),
-            WinitEvent::Redraw => {
-                let size = winit_backend.window_size();
-                let damage = Rectangle::from_size(size);
+        // Set WAYLAND_DISPLAY for child processes
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", &projectwc.socket_name) };
 
-                let pending_screencopy = state.pending_screencopy.take();
-
-                {
-                    let (renderer, mut framebuffer) =
-                        winit_backend.bind().expect("failed to bind winit window");
-                    smithay::desktop::space::render_output::<
-                        _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
-                        _,
-                        _,
-                    >(
-                        &output,
-                        renderer,
-                        &mut framebuffer,
-                        1.0,
-                        0,
-                        [&state.space],
-                        &[],
-                        &mut damage_tracker,
-                        make_rgb(150., 154., 171., 1.0),
-                    )
-                    .unwrap();
-                }
-
-                winit_backend
-                    .submit(Some(&[damage]))
-                    .expect("failed to submit damage");
-
-                if let Some(screencopy) = pending_screencopy
-                    && screencopy.output() == &output
-                {
-                    let (renderer, framebuffer) =
-                        winit_backend.bind().expect("failed to bind for screencopy");
-                    if let Err(err) = render_screencopy(
-                        renderer,
-                        &framebuffer,
-                        &output,
-                        screencopy,
-                        state.start_time,
-                    ) {
-                        tracing::warn!("screencopy failed: {err:?}");
-                    }
-                }
-
-                state.space.elements().for_each(|window| {
-                    window.send_frame(
-                        &output,
-                        state.start_time.elapsed(),
-                        Some(Duration::ZERO),
-                        |_, _| Some(output.clone()),
+        projectwc
+            .loop_handle
+            .insert_source(winit, move |event, _, state| match event {
+                WinitEvent::Resized { size, .. } => {
+                    let winit = state.backend.winit();
+                    winit.output.change_current_state(
+                        Some(smithay::output::Mode {
+                            size,
+                            refresh: 60_000,
+                        }),
+                        None,
+                        None,
+                        None,
                     );
-                });
+                    state.projectwc.apply_layout().ok();
+                }
+                WinitEvent::Input(event) => state.handle_input_event(event),
+                WinitEvent::Redraw => {
+                    let winit = state.backend.winit();
+                    let backend = &mut winit.backend;
 
-                state.space.refresh();
-                state.display_handle.flush_clients().unwrap();
+                    let size = backend.window_size();
+                    let damage = Rectangle::from_size(size);
 
-                // Ask for redraw to schedule new frame.
-                winit_backend.window().request_redraw();
-            }
-            WinitEvent::CloseRequested => state.loop_signal.stop(),
-            _ => (),
-        })
-        .map_err(|e| CompositorError::Backend(format!("{:?}", e)))?;
+                    let pending_screencopy = state.projectwc.pending_screencopy.take();
 
-    Ok(())
+                    {
+                        let (renderer, mut framebuffer) =
+                            backend.bind().expect("failed to bind winit window");
+                        smithay::desktop::space::render_output::<
+                            _,
+                            WaylandSurfaceRenderElement<GlesRenderer>,
+                            _,
+                            _,
+                        >(
+                            &winit.output,
+                            renderer,
+                            &mut framebuffer,
+                            1.0,
+                            0,
+                            [&state.projectwc.space],
+                            &[],
+                            &mut winit.damage_tracker,
+                            make_rgb(150., 154., 171., 1.0),
+                        )
+                        .unwrap();
+                    }
+
+                    backend
+                        .submit(Some(&[damage]))
+                        .expect("failed to submit damage");
+
+                    if let Some(screencopy) = pending_screencopy
+                        && screencopy.output() == &winit.output
+                    {
+                        let (renderer, framebuffer) =
+                            backend.bind().expect("failed to bind for screencopy");
+                        if let Err(err) = render_screencopy(
+                            renderer,
+                            &framebuffer,
+                            &winit.output,
+                            screencopy,
+                            state.projectwc.start_time,
+                        ) {
+                            tracing::warn!("screencopy failed: {err:?}");
+                        }
+                    }
+
+                    state.projectwc.space.elements().for_each(|window| {
+                        window.send_frame(
+                            &winit.output,
+                            state.projectwc.start_time.elapsed(),
+                            Some(Duration::ZERO),
+                            |_, _| Some(winit.output.clone()),
+                        );
+                    });
+
+                    state.projectwc.space.refresh();
+                    state.projectwc.display_handle.flush_clients().unwrap();
+
+                    // Ask for redraw to schedule new frame.
+                    backend.window().request_redraw();
+                }
+                WinitEvent::CloseRequested => state.projectwc.loop_signal.stop(),
+                _ => (),
+            })
+            .map_err(|e| CompositorError::Backend(format!("{:?}", e)))?;
+
+        let winit = Self {
+            output,
+            backend,
+            damage_tracker,
+        };
+
+        Ok(winit)
+    }
 }
 
 fn render_screencopy(

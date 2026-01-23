@@ -1,4 +1,4 @@
-use crate::ProjectWC;
+use crate::state::State;
 use smithay::{
     desktop::Window, reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     utils::SERIAL_COUNTER,
@@ -15,30 +15,31 @@ enum Direction {
 }
 
 impl Action {
-    pub fn execute(self, project_wc: &mut ProjectWC) {
+    pub fn execute(self, state: &mut State) {
         match self {
             Action::FocusNext => {
-                change_focus(Direction::Next, project_wc);
+                change_focus(Direction::Next, state);
             }
             Action::FocusPrevious => {
-                change_focus(Direction::Previous, project_wc);
+                change_focus(Direction::Previous, state);
             }
         };
     }
 }
 
-fn change_focus(direction: Direction, project_wc: &mut ProjectWC) {
-    let keyboard = project_wc.seat.get_keyboard().unwrap();
+fn change_focus(direction: Direction, state: &mut State) {
+    let keyboard = state.projectwc.seat.get_keyboard().unwrap();
     let serial = SERIAL_COUNTER.next_serial();
 
-    let windows: Vec<Window> = project_wc.space.elements().cloned().collect();
+    let windows: Vec<Window> = state.projectwc.space.elements().cloned().collect();
     if windows.is_empty() {
         return;
     }
 
     let current_focus = keyboard.current_focus();
     let current_idx = current_focus.and_then(|surf| {
-        project_wc
+        state
+            .projectwc
             .window_for_surface(&surf)
             .and_then(|w| windows.iter().position(|win| win == &w))
     });
@@ -65,6 +66,6 @@ fn change_focus(direction: Direction, project_wc: &mut ProjectWC) {
             state.states.set(xdg_toplevel::State::Activated);
         });
         toplevel.send_pending_configure();
-        keyboard.set_focus(project_wc, Some(toplevel.wl_surface().clone()), serial);
+        keyboard.set_focus(state, Some(toplevel.wl_surface().clone()), serial);
     }
 }

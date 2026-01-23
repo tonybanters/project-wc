@@ -25,25 +25,25 @@ use smithay::{
 };
 
 use crate::{
-    ProjectWC,
     grabs::{move_grab::MoveGrab, resize_grab::ResizeSurfaceGrab},
+    state::State,
 };
 
-impl XdgShellHandler for ProjectWC {
+impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell_state
+        &mut self.projectwc.xdg_shell_state
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = Window::new_wayland_window(surface.clone());
-        self.space.map_element(window, (0, 0), false);
-        self.apply_layout().ok();
+        self.projectwc.space.map_element(window, (0, 0), false);
+        self.projectwc.apply_layout().ok();
         surface.send_configure();
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         self.unconstrain_popup(&surface);
-        if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface)) {
+        if let Err(err) = self.projectwc.popups.track_popup(PopupKind::Xdg(surface)) {
             tracing::warn!("error while tracking popup: {err:?}");
         }
     }
@@ -74,9 +74,9 @@ impl XdgShellHandler for ProjectWC {
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self.window_for_surface(wl_surface).unwrap();
+            let window = self.projectwc.window_for_surface(wl_surface).unwrap();
 
-            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_location = self.projectwc.space.element_location(&window).unwrap();
 
             let grab = MoveGrab {
                 start_data,
@@ -101,9 +101,9 @@ impl XdgShellHandler for ProjectWC {
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self.window_for_surface(wl_surface).unwrap();
+            let window = self.projectwc.window_for_surface(wl_surface).unwrap();
 
-            let initial_window_location = self.space.element_location(&window).unwrap();
+            let initial_window_location = self.projectwc.space.element_location(&window).unwrap();
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {
@@ -124,15 +124,18 @@ impl XdgShellHandler for ProjectWC {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        let window = self.window_for_surface(surface.wl_surface()).unwrap();
-        let output = self.space.outputs().next().unwrap();
-        let geometry = self.space.output_geometry(output).unwrap();
+        let window = self
+            .projectwc
+            .window_for_surface(surface.wl_surface())
+            .unwrap();
+        let output = self.projectwc.space.outputs().next().unwrap();
+        let geometry = self.projectwc.space.output_geometry(output).unwrap();
 
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Maximized);
             state.size = Some(geometry.size);
         });
-        self.space.map_element(window, geometry.loc, true);
+        self.projectwc.space.map_element(window, geometry.loc, true);
 
         if surface.is_initial_configure_sent() {
             surface.send_configure();
@@ -151,22 +154,22 @@ impl XdgShellHandler for ProjectWC {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        let window = self.window_for_surface(surface.wl_surface());
+        let window = self.projectwc.window_for_surface(surface.wl_surface());
 
         if let Some(window) = window {
-            self.space.unmap_elem(&window);
-            self.apply_layout().ok();
+            self.projectwc.space.unmap_elem(&window);
+            self.projectwc.apply_layout().ok();
         }
     }
 }
 
-delegate_xdg_shell!(ProjectWC);
+delegate_xdg_shell!(State);
 
 fn check_grab(
-    seat: &Seat<ProjectWC>,
+    seat: &Seat<State>,
     surface: &WlSurface,
     serial: Serial,
-) -> Option<PointerGrabStartData<ProjectWC>> {
+) -> Option<PointerGrabStartData<State>> {
     let pointer = seat.get_pointer()?;
 
     // Check that this surface has a click grab.
@@ -222,19 +225,19 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
     }
 }
 
-impl ProjectWC {
+impl State {
     pub fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
 
-        let Some(window) = self.window_for_surface(&root) else {
+        let Some(window) = self.projectwc.window_for_surface(&root) else {
             return;
         };
 
-        let output = self.space.outputs().next().unwrap();
-        let output_geo = self.space.output_geometry(output).unwrap();
-        let window_geo = self.space.element_geometry(&window).unwrap();
+        let output = self.projectwc.space.outputs().next().unwrap();
+        let output_geo = self.projectwc.space.output_geometry(output).unwrap();
+        let window_geo = self.projectwc.space.element_geometry(&window).unwrap();
 
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.

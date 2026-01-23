@@ -4,16 +4,19 @@
   pkg-config,
   wayland,
   libxkbcommon,
-  libGL,
-  libX11,
-  libXcursor,
-  libXrandr,
-  libXi,
+  udev,
+  seatd,
+  libinput,
+  libgbm,
+  libdisplay-info_0_2,
   gitRev ? null,
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "projectwc";
-  version = if gitRev != null then lib.substring 0 8 gitRev else "dev";
+  version =
+    if gitRev != null
+    then lib.substring 0 8 gitRev
+    else "dev";
 
   src = ./.;
 
@@ -27,11 +30,11 @@ rustPlatform.buildRustPackage (finalAttrs: {
   buildInputs = [
     wayland
     libxkbcommon
-    libGL
-    libX11
-    libXcursor
-    libXrandr
-    libXi
+    udev
+    seatd
+    libinput
+    libgbm
+    libdisplay-info_0_2 # TODO: update to 0.3
   ];
 
   doCheck = false;

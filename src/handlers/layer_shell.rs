@@ -1,4 +1,4 @@
-use crate::state::ProjectWC;
+use crate::state::State;
 use smithay::delegate_layer_shell;
 use smithay::desktop::{LayerSurface, Space, Window, WindowSurfaceType, layer_map_for_output};
 use smithay::output::Output;
@@ -11,9 +11,9 @@ use smithay::wayland::shell::wlr_layer::{
 };
 use smithay::wayland::shell::xdg::PopupSurface;
 
-impl WlrLayerShellHandler for ProjectWC {
+impl WlrLayerShellHandler for State {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
-        &mut self.layer_shell_state
+        &mut self.projectwc.layer_shell_state
     }
 
     fn new_layer_surface(
@@ -26,7 +26,7 @@ impl WlrLayerShellHandler for ProjectWC {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.projectwc.space.outputs().next().cloned());
 
         let Some(output) = output else {
             tracing::warn!(namespace, "no output for new layer surface");
@@ -41,7 +41,7 @@ impl WlrLayerShellHandler for ProjectWC {
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.space.outputs().find_map(|output| {
+        if let Some((mut map, layer)) = self.projectwc.space.outputs().find_map(|output| {
             let map = layer_map_for_output(output);
             let layer = map
                 .layers()
@@ -58,7 +58,7 @@ impl WlrLayerShellHandler for ProjectWC {
         self.unconstrain_popup(&popup);
     }
 }
-delegate_layer_shell!(ProjectWC);
+delegate_layer_shell!(State);
 
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) {

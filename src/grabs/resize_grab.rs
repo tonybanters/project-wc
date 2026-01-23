@@ -11,7 +11,7 @@ use smithay::{
     wayland::{compositor, shell::xdg::SurfaceCachedState},
 };
 
-use crate::ProjectWC;
+use crate::state::State;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -38,7 +38,7 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 
 #[derive(Debug)]
 pub struct ResizeSurfaceGrab {
-    start_data: PointerGrabStartData<ProjectWC>,
+    start_data: PointerGrabStartData<State>,
     window: Window,
 
     edges: ResizeEdge,
@@ -49,7 +49,7 @@ pub struct ResizeSurfaceGrab {
 
 impl ResizeSurfaceGrab {
     pub fn start(
-        start_data: PointerGrabStartData<ProjectWC>,
+        start_data: PointerGrabStartData<State>,
         window: Window,
         edges: ResizeEdge,
         initial_window_rect: Rectangle<i32, Logical>,
@@ -72,13 +72,13 @@ impl ResizeSurfaceGrab {
     }
 }
 
-impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
+impl PointerGrab<State> for ResizeSurfaceGrab {
     fn motion(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         _focus: Option<(
-            <ProjectWC as smithay::input::SeatHandler>::PointerFocus,
+            <State as smithay::input::SeatHandler>::PointerFocus,
             Point<f64, Logical>,
         )>,
         event: &smithay::input::pointer::MotionEvent,
@@ -150,10 +150,10 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn relative_motion(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         focus: Option<(
-            <ProjectWC as smithay::input::SeatHandler>::PointerFocus,
+            <State as smithay::input::SeatHandler>::PointerFocus,
             Point<f64, Logical>,
         )>,
         event: &smithay::input::pointer::RelativeMotionEvent,
@@ -163,8 +163,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn button(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::ButtonEvent,
     ) {
         handle.button(data, event);
@@ -196,8 +196,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn axis(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         details: smithay::input::pointer::AxisFrame,
     ) {
         handle.axis(data, details);
@@ -205,16 +205,16 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn frame(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
     ) {
         handle.frame(data);
     }
 
     fn gesture_swipe_begin(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GestureSwipeBeginEvent,
     ) {
         handle.gesture_swipe_begin(data, event);
@@ -222,8 +222,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_swipe_update(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GestureSwipeUpdateEvent,
     ) {
         handle.gesture_swipe_update(data, event);
@@ -231,8 +231,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_swipe_end(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GestureSwipeEndEvent,
     ) {
         handle.gesture_swipe_end(data, event);
@@ -240,8 +240,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_pinch_begin(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GesturePinchBeginEvent,
     ) {
         handle.gesture_pinch_begin(data, event);
@@ -249,8 +249,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_pinch_update(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GesturePinchUpdateEvent,
     ) {
         handle.gesture_pinch_update(data, event);
@@ -258,8 +258,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_pinch_end(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GesturePinchEndEvent,
     ) {
         handle.gesture_pinch_end(data, event);
@@ -267,8 +267,8 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_hold_begin(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GestureHoldBeginEvent,
     ) {
         handle.gesture_hold_begin(data, event);
@@ -276,18 +276,18 @@ impl PointerGrab<ProjectWC> for ResizeSurfaceGrab {
 
     fn gesture_hold_end(
         &mut self,
-        data: &mut ProjectWC,
-        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, ProjectWC>,
+        data: &mut State,
+        handle: &mut smithay::input::pointer::PointerInnerHandle<'_, State>,
         event: &smithay::input::pointer::GestureHoldEndEvent,
     ) {
         handle.gesture_hold_end(data, event);
     }
 
-    fn start_data(&self) -> &PointerGrabStartData<ProjectWC> {
+    fn start_data(&self) -> &PointerGrabStartData<State> {
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut ProjectWC) {}
+    fn unset(&mut self, _data: &mut State) {}
 }
 
 /// State of the resize operation.
