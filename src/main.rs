@@ -13,7 +13,7 @@ fn main() -> Result<()> {
 
     let display = Display::new().map_err(|e| CompositorError::Backend(e.to_string()))?;
     let mut state = State::new(event_loop.handle(), event_loop.get_signal(), display).ok_or(
-        CompositorError::Backend("Failed to initilize backend".into()),
+        CompositorError::Backend("Failed to initialize backend".into()),
     )?;
 
     let spawn_cmd: Option<String> = std::env::args().nth(1);
